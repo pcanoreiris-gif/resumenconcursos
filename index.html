@@ -19,7 +19,6 @@
     .badge-nec  { background:#fee2e2; color:#991b1b; }
     .badge-liq  { background:#fef9c3; color:#854d0e; }
     #tableBody tr:hover { background:#fafafa; }
-    .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
     .search-box { border:1px solid #e5e7eb; border-radius:8px; padding:6px 12px; outline:none; width:100%; }
     .search-box:focus { border-color:#3b82f6; box-shadow:0 0 0 2px rgba(59,130,246,.15); }
     canvas { max-height: 280px; }
@@ -29,14 +28,40 @@
     .tooltip-box {
       position:fixed; background:#1e293b; color:white; padding:8px 12px;
       border-radius:8px; font-size:.8rem; pointer-events:none;
-      opacity:0; transition:opacity .15s; z-index:100; max-width:200px;
+      opacity:0; transition:opacity .15s; z-index:100; max-width:220px;
     }
+    /* Loading */
+    #loadingOverlay {
+      position:fixed; inset:0; background:rgba(248,249,251,.85);
+      display:flex; flex-direction:column; align-items:center; justify-content:center;
+      z-index:200; gap:12px;
+    }
+    .spinner {
+      width:40px; height:40px; border:3px solid #e5e7eb;
+      border-top-color:#dc2626; border-radius:50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    /* Error */
+    #errorBanner { display:none; }
   </style>
 </head>
 <body class="min-h-screen">
 
-<!-- Tooltip -->
 <div id="tooltip" class="tooltip-box"></div>
+
+<!-- Loading overlay -->
+<div id="loadingOverlay">
+  <div class="spinner"></div>
+  <p class="text-sm text-gray-500 font-medium">Cargando datos del BOE…</p>
+  <p class="text-xs text-gray-400">Consultando últimos 30 días hábiles</p>
+</div>
+
+<!-- Error banner -->
+<div id="errorBanner" class="bg-red-50 border border-red-200 text-red-700 text-sm px-6 py-3 flex items-center justify-between">
+  <span id="errorMsg"></span>
+  <button onclick="loadData()" class="underline font-medium ml-4">Reintentar</button>
+</div>
 
 <!-- ── HEADER ────────────────────────────────────────────────────── -->
 <header class="bg-white border-b border-gray-100 sticky top-0 z-50">
@@ -45,12 +70,12 @@
       <span class="text-2xl">⚖️</span>
       <div>
         <h1 class="text-base font-bold text-gray-900 leading-tight">Concursos de Acreedores · España</h1>
-        <p class="text-xs text-gray-400">Fuente: BOE · Publicidad Concursal · Registro Mercantil</p>
+        <p class="text-xs text-gray-400">Fuente: BOE · Boletín Oficial del Estado</p>
       </div>
     </div>
     <div class="flex items-center gap-4">
       <span id="lastUpdate" class="text-xs text-gray-400"></span>
-      <span class="bg-green-100 text-green-700 text-xs font-semibold px-3 py-1 rounded-full">EN VIVO</span>
+      <span id="statusBadge" class="text-xs font-semibold px-3 py-1 rounded-full bg-gray-100 text-gray-400">Cargando…</span>
     </div>
   </div>
 </header>
@@ -60,13 +85,10 @@
   <!-- ── FILTERS ───────────────────────────────────────────────────── -->
   <div class="card p-4 flex flex-wrap gap-3 items-center">
     <span class="text-sm font-semibold text-gray-600 mr-2">Filtros:</span>
-    <select id="fCCAA"    class="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:border-blue-400">
+    <select id="fCCAA" class="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:border-blue-400">
       <option value="">Todas las CCAA</option>
     </select>
-    <select id="fSector"  class="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:border-blue-400">
-      <option value="">Todos los sectores</option>
-    </select>
-    <select id="fTipo"    class="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:border-blue-400">
+    <select id="fTipo" class="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:border-blue-400">
       <option value="">Todos los tipos</option>
       <option>Voluntario</option>
       <option>Necesario</option>
@@ -74,16 +96,15 @@
     </select>
     <select id="fPeriodo" class="text-sm border border-gray-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:border-blue-400">
       <option value="90">Últimos 90 días</option>
-      <option value="30">Últimos 30 días</option>
-      <option value="180">Últimos 6 meses</option>
-      <option value="365">Último año</option>
-      <option value="9999">Todo</option>
+      <option value="30" selected>Últimos 30 días</option>
+      <option value="14">Últimas 2 semanas</option>
+      <option value="7">Última semana</option>
     </select>
     <button onclick="resetFilters()" class="ml-auto text-xs text-gray-400 hover:text-gray-700 underline">Limpiar filtros</button>
   </div>
 
   <!-- ── KPIs ──────────────────────────────────────────────────────── -->
-  <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
     <div class="card p-5">
       <p class="text-xs text-gray-400 font-medium uppercase tracking-wide">Total concursos</p>
       <p class="kpi-value text-gray-900 mt-1" id="kpiTotal">—</p>
@@ -104,24 +125,15 @@
       <p class="kpi-value text-red-600 mt-1" id="kpiNec">—</p>
       <p class="text-xs text-gray-400 mt-1" id="kpiNecPct">—</p>
     </div>
-    <div class="card p-5">
-      <p class="text-xs text-gray-400 font-medium uppercase tracking-wide">Pasivo estimado</p>
-      <p class="kpi-value text-purple-600 mt-1" id="kpiPasivo">—</p>
-      <p class="text-xs text-gray-400 mt-1">millones €</p>
-    </div>
   </div>
 
   <!-- ── MAP + CCAA BAR ─────────────────────────────────────────────── -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-    <!-- Spain choropleth map -->
     <div class="card p-5">
       <h2 class="text-sm font-semibold text-gray-700 mb-3">Distribución geográfica</h2>
       <svg id="mapSvg" viewBox="0 0 700 540"></svg>
       <p class="text-xs text-gray-400 text-center mt-1">Color = intensidad de concursos por comunidad autónoma</p>
     </div>
-
-    <!-- CCAA bar -->
     <div class="card p-5">
       <h2 class="text-sm font-semibold text-gray-700 mb-3">Concursos por Comunidad Autónoma</h2>
       <canvas id="chartCCAA"></canvas>
@@ -131,7 +143,7 @@
   <!-- ── TIMELINE + TIPO ────────────────────────────────────────────── -->
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
     <div class="card p-5 col-span-2">
-      <h2 class="text-sm font-semibold text-gray-700 mb-3">Evolución mensual de concursos</h2>
+      <h2 class="text-sm font-semibold text-gray-700 mb-3">Evolución semanal de concursos</h2>
       <canvas id="chartTimeline"></canvas>
     </div>
     <div class="card p-5">
@@ -141,18 +153,12 @@
     </div>
   </div>
 
-  <!-- ── SECTOR ────────────────────────────────────────────────────── -->
-  <div class="card p-5">
-    <h2 class="text-sm font-semibold text-gray-700 mb-3">Concursos por sector de actividad (CNAE)</h2>
-    <canvas id="chartSector" style="max-height:200px"></canvas>
-  </div>
-
   <!-- ── TABLE ─────────────────────────────────────────────────────── -->
   <div class="card p-5">
     <div class="flex items-center justify-between mb-4">
       <h2 class="text-sm font-semibold text-gray-700">Registro de empresas en concurso</h2>
       <div class="flex items-center gap-3">
-        <input id="search" type="text" class="search-box text-sm" placeholder="Buscar empresa, NIF, ciudad…" oninput="renderTable()" style="width:240px"/>
+        <input id="search" type="text" class="search-box text-sm" placeholder="Buscar empresa, juzgado…" oninput="renderTable()" style="width:240px"/>
         <button onclick="exportCSV()" class="text-xs text-blue-600 hover:underline font-medium">Exportar CSV</button>
       </div>
     </div>
@@ -161,13 +167,10 @@
         <thead>
           <tr class="text-left text-xs text-gray-400 border-b border-gray-100">
             <th class="pb-2 font-medium cursor-pointer hover:text-gray-700" onclick="sortBy('empresa')">Empresa ↕</th>
-            <th class="pb-2 font-medium">NIF</th>
             <th class="pb-2 font-medium cursor-pointer hover:text-gray-700" onclick="sortBy('ccaa')">CCAA ↕</th>
-            <th class="pb-2 font-medium">Sector</th>
+            <th class="pb-2 font-medium">Juzgado</th>
             <th class="pb-2 font-medium cursor-pointer hover:text-gray-700" onclick="sortBy('fecha')">Fecha ↕</th>
             <th class="pb-2 font-medium">Tipo</th>
-            <th class="pb-2 font-medium">Pasivo (€)</th>
-            <th class="pb-2 font-medium">Admin. Concursal</th>
             <th class="pb-2 font-medium">BOE</th>
           </tr>
         </thead>
@@ -179,452 +182,320 @@
       <div class="flex gap-2">
         <button id="btnPrev" onclick="changePage(-1)" class="px-2 py-1 border rounded hover:bg-gray-50 disabled:opacity-30">← Anterior</button>
         <span id="pageInfo"></span>
-        <button id="btnNext" onclick="changePage(1)"  class="px-2 py-1 border rounded hover:bg-gray-50 disabled:opacity-30">Siguiente →</button>
+        <button id="btnNext" onclick="changePage(1)" class="px-2 py-1 border rounded hover:bg-gray-50 disabled:opacity-30">Siguiente →</button>
       </div>
     </div>
+  </div>
+
+  <!-- Sprint 2 notice -->
+  <div class="card p-5 border-l-4 border-blue-300">
+    <p class="text-xs text-gray-500">
+      <strong class="text-gray-700">Sprint 2 — Próximamente:</strong>
+      NIF, admin concursal, pasivo estimado y sector de actividad (Registro Público Concursal).
+    </p>
   </div>
 
 </main>
 
 <footer class="max-w-screen-xl mx-auto px-6 py-4 text-xs text-gray-300 text-center">
-  Datos obtenidos del BOE (Boletín Oficial del Estado) · Publicidad Concursal (Registro Público Concursal) · BORME<br/>
-  Actualización diaria. Los datos pueden contener un retardo de 24-48h respecto a la publicación oficial.
+  Datos obtenidos del BOE (Boletín Oficial del Estado) · Sección IV Administración de Justicia · Sección V-B<br/>
+  Actualización automática cada 6 horas.
 </footer>
 
 <script>
 // ═══════════════════════════════════════════════════════
-//  DATOS DUMMY — reemplazar con fetch() a una API real
+//  ESTADO
 // ═══════════════════════════════════════════════════════
-
-const CCAA_LIST = [
-  "Comunidad de Madrid","Cataluña","Andalucía","Comunitat Valenciana",
-  "País Vasco","Aragón","Castilla y León","Galicia","Región de Murcia",
-  "Castilla-La Mancha","Islas Baleares","Canarias","Extremadura",
-  "Principado de Asturias","Cantabria","La Rioja","C. Foral de Navarra"
-];
-
-const SECTORES = [
-  "Construcción","Hostelería y restauración","Comercio al por menor",
-  "Transporte y logística","Industria manufacturera","Inmobiliario",
-  "Agricultura y alimentación","Servicios profesionales","Tecnología",
-  "Salud y bienestar","Automoción","Textil y moda","Energía","Educación"
-];
-
-const CIUDADES_POR_CCAA = {
-  "Comunidad de Madrid":   ["Madrid","Alcalá de Henares","Leganés","Getafe"],
-  "Cataluña":              ["Barcelona","Sabadell","Badalona","Hospitalet","Terrassa","Girona","Tarragona"],
-  "Andalucía":             ["Sevilla","Málaga","Granada","Córdoba","Cádiz","Almería","Huelva","Jaén"],
-  "Comunitat Valenciana":  ["Valencia","Alicante","Castellón","Elche"],
-  "País Vasco":            ["Bilbao","Vitoria","San Sebastián"],
-  "Aragón":                ["Zaragoza","Huesca","Teruel"],
-  "Castilla y León":       ["Valladolid","Salamanca","Burgos","León","Palencia"],
-  "Galicia":               ["Vigo","Coruña","Santiago","Pontevedra","Lugo","Ourense"],
-  "Región de Murcia":      ["Murcia","Cartagena","Lorca"],
-  "Castilla-La Mancha":    ["Toledo","Albacete","Ciudad Real","Cuenca","Guadalajara"],
-  "Islas Baleares":        ["Palma","Ibiza","Mahón"],
-  "Canarias":              ["Las Palmas","Santa Cruz de Tenerife"],
-  "Extremadura":           ["Badajoz","Cáceres","Mérida"],
-  "Principado de Asturias":["Oviedo","Gijón","Avilés"],
-  "Cantabria":             ["Santander","Torrelavega"],
-  "La Rioja":              ["Logroño"],
-  "C. Foral de Navarra":   ["Pamplona","Tudela"]
-};
-
-// Coordenadas de respaldo (fallback sin GeoJSON)
-const CCAA_SVG_POS = {
-  "Comunidad de Madrid":    [330,240],
-  "Cataluña":               [520,130],
-  "Andalucía":              [270,390],
-  "Comunitat Valenciana":   [460,270],
-  "País Vasco":             [360,80],
-  "Aragón":                 [430,160],
-  "Castilla y León":        [260,180],
-  "Galicia":                [120,130],
-  "Región de Murcia":       [430,330],
-  "Castilla-La Mancha":     [350,300],
-  "Islas Baleares":         [560,300],
-  "Canarias":               [90,435],
-  "Extremadura":            [200,310],
-  "Principado de Asturias": [230,90],
-  "Cantabria":              [290,75],
-  "La Rioja":               [370,110],
-  "C. Foral de Navarra":    [410,95]
-};
-
-// Mapeo de nombres del GeoJSON (es-atlas) a nuestros nombres de CCAA
-const CCAA_GEO_MAP = {
-  "Andalucía":                  "Andalucía",
-  "Aragón":                     "Aragón",
-  "Asturias":                   "Principado de Asturias",
-  "Principado de Asturias":     "Principado de Asturias",
-  "Balears":                    "Islas Baleares",
-  "Illes Balears":              "Islas Baleares",
-  "Islas Baleares":             "Islas Baleares",
-  "Canarias":                   "Canarias",
-  "Cantabria":                  "Cantabria",
-  "Castilla y León":            "Castilla y León",
-  "Castilla-La Mancha":         "Castilla-La Mancha",
-  "Cataluña":                   "Cataluña",
-  "Catalunya":                  "Cataluña",
-  "Comunitat Valenciana":       "Comunitat Valenciana",
-  "Valenciana, Comunitat":      "Comunitat Valenciana",
-  "Extremadura":                "Extremadura",
-  "Galicia":                    "Galicia",
-  "La Rioja":                   "La Rioja",
-  "Rioja, La":                  "La Rioja",
-  "Madrid":                     "Comunidad de Madrid",
-  "Comunidad de Madrid":        "Comunidad de Madrid",
-  "Murcia":                     "Región de Murcia",
-  "Región de Murcia":           "Región de Murcia",
-  "Murcia, Región de":          "Región de Murcia",
-  "Navarra":                    "C. Foral de Navarra",
-  "Comunidad Foral de Navarra": "C. Foral de Navarra",
-  "Navarra, Comunidad Foral de":"C. Foral de Navarra",
-  "País Vasco":                 "País Vasco",
-  "Euskadi":                    "País Vasco",
-};
-
-const NOMBRES_EMPRESA = [
-  "Construcciones Anaya","Hostal Los Pinos","Distribuciones Medina","Transportes Ortega",
-  "Industrias Rivas","Inmuebles del Sur","Frutas y Verduras López","Asesoría Serrano",
-  "Tech Solutions Ibérica","Clínica Dental Vargas","Autolavado Express","Textiles Miraflores",
-  "Energías Renovables Sur","Academia Idiomas Norte","Imprenta Castilla","Bar Restaurante Pepe",
-  "Mudanzas García","Supermercados El Ahorro","Hotel Mirador","Talleres Mecánicos Pérez",
-  "Carpintería Fina Alarcón","Fontanería Hermanos Torres","Panadería La Espiga","Farmacia Central",
-  "Agencia Viajes Horizonte","Seguros Iberia SA","Ferretería Los Álamos","Clínica Veterinaria Nova",
-  "Logística Integral SL","Editora Meridional","Taller Artesanal Cobre","Muebles Atlántico",
-  "Consultoría Estratégica SA","Grúas y Elevación Norte","Frío Industrial Córdoba",
-  "Lavandería Industrial Plaza","Calzados Premium SL","Ópticas Visión Clara","Catering Gourmet Sur",
-  "Distribuidora Bebidas Centro","Plásticos del Mediterráneo","Cerámicas Talavera Export",
-  "Papelería y Librería Goya","Servicios Integrales Madrid","Bodegas Ribera Alta",
-  "Confecciones Levante","Escuela Conducción Segura","Parking Urbano Norte","Floristería La Rosa"
-];
-
-const ADMIN_CONCURSAL = [
-  "García Rodríguez, A.","Martínez López, P.","Sánchez Fernández, M.",
-  "González Torres, L.","Pérez Moreno, C.","López Jiménez, F.",
-  "Romero Alvarado, B.","Navarro Blanco, R.","Molina Vera, T.",
-  "Castillo Reyes, E."
-];
-
-function rand(arr)   { return arr[Math.floor(Math.random() * arr.length)]; }
-function randInt(a,b){ return Math.floor(Math.random()*(b-a+1))+a; }
-function randNIF()   { const l="ABCDEFGHJKLMNPQRSUVW"; return l[randInt(0,l.length-1)]+String(randInt(1000000,9999999))+String.fromCharCode(65+randInt(0,9)); }
-function fmtDate(d)  { return d.toLocaleDateString("es-ES",{day:"2-digit",month:"2-digit",year:"numeric"}); }
-function fmtNum(n)   { return n.toLocaleString("es-ES"); }
-
-// Generar 200 registros dummy
-function generateData(n = 200) {
-  const today = new Date();
-  const records = [];
-  for (let i = 0; i < n; i++) {
-    const daysAgo = randInt(0, 365);
-    const fecha = new Date(today - daysAgo * 86400000);
-    const ccaa  = rand(CCAA_LIST);
-    const ciudad = rand(CIUDADES_POR_CCAA[ccaa] || [ccaa]);
-    const tipo   = Math.random() < .70 ? "Voluntario" : Math.random() < .60 ? "Necesario" : "Liquidación";
-    records.push({
-      id:        i+1,
-      empresa:   rand(NOMBRES_EMPRESA) + (Math.random()>.5 ? " "+String(randInt(1,99)):""),
-      nif:       randNIF(),
-      ccaa,
-      ciudad,
-      sector:    rand(SECTORES),
-      fecha,
-      tipo,
-      pasivo:    randInt(50000, 8000000),
-      admin:     rand(ADMIN_CONCURSAL),
-      boe:       `BOE-B-${fecha.getFullYear()}-${String(randInt(10000,99999))}`,
-    });
-  }
-  return records.sort((a,b) => b.fecha - a.fecha);
-}
-
-const ALL_DATA = generateData(200);
-
-// ═══════════════════════════════════════════════════════
-//  STATE & FILTERING
-// ═══════════════════════════════════════════════════════
-let sortKey = "fecha", sortDir = -1, currentPage = 1;
+let ALL_DATA = [];
+let sortKey = 'fecha', sortDir = -1, currentPage = 1;
 const PAGE_SIZE = 15;
 
+const CCAA_LIST = [
+  'Comunidad de Madrid','Cataluña','Andalucía','Comunitat Valenciana',
+  'País Vasco','Aragón','Castilla y León','Galicia','Región de Murcia',
+  'Castilla-La Mancha','Islas Baleares','Canarias','Extremadura',
+  'Principado de Asturias','Cantabria','La Rioja','C. Foral de Navarra'
+];
+
+// ═══════════════════════════════════════════════════════
+//  CARGA DE DATOS DESDE LA API
+// ═══════════════════════════════════════════════════════
+async function loadData() {
+  showLoading(true);
+  hideError();
+
+  const dias = parseInt(document.getElementById('fPeriodo').value) || 30;
+
+  try {
+    const res = await fetch(`/api/concursos?dias=${dias}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
+
+    // Convert fecha "YYYYMMDD" → Date object
+    ALL_DATA = (json.concursos || []).map(c => ({
+      ...c,
+      fecha: new Date(
+        parseInt(c.fecha.slice(0, 4)),
+        parseInt(c.fecha.slice(4, 6)) - 1,
+        parseInt(c.fecha.slice(6, 8))
+      ),
+    }));
+
+    // Populate CCAA filter with values present in data
+    populateCCAAFilter();
+
+    document.getElementById('lastUpdate').textContent =
+      'Actualizado: ' + new Date(json.actualizado).toLocaleDateString('es-ES', {
+        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+
+    document.getElementById('statusBadge').textContent = 'EN VIVO';
+    document.getElementById('statusBadge').className =
+      'text-xs font-semibold px-3 py-1 rounded-full bg-green-100 text-green-700';
+
+    renderAll();
+  } catch (err) {
+    showError('No se pudieron cargar los datos del BOE. ' + err.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+function showLoading(v) {
+  document.getElementById('loadingOverlay').style.display = v ? 'flex' : 'none';
+}
+function showError(msg) {
+  document.getElementById('errorMsg').textContent = msg;
+  document.getElementById('errorBanner').style.display = 'flex';
+}
+function hideError() {
+  document.getElementById('errorBanner').style.display = 'none';
+}
+
+function populateCCAAFilter() {
+  const ccaaEl = document.getElementById('fCCAA');
+  const current = ccaaEl.value;
+  ccaaEl.innerHTML = '<option value="">Todas las CCAA</option>';
+  const found = [...new Set(ALL_DATA.map(r => r.ccaa).filter(Boolean))].sort();
+  found.forEach(c => {
+    const o = document.createElement('option');
+    o.value = c; o.textContent = c;
+    if (c === current) o.selected = true;
+    ccaaEl.appendChild(o);
+  });
+}
+
+// ═══════════════════════════════════════════════════════
+//  FILTRADO
+// ═══════════════════════════════════════════════════════
 function getFilteredData() {
-  const ccaa    = document.getElementById("fCCAA").value;
-  const sector  = document.getElementById("fSector").value;
-  const tipo    = document.getElementById("fTipo").value;
-  const periodo = parseInt(document.getElementById("fPeriodo").value);
-  const search  = (document.getElementById("search")?.value || "").toLowerCase();
-  const cutoff  = new Date(Date.now() - periodo * 86400000);
+  const ccaa   = document.getElementById('fCCAA').value;
+  const tipo   = document.getElementById('fTipo').value;
+  const search = (document.getElementById('search')?.value || '').toLowerCase();
+
   return ALL_DATA.filter(r =>
-    (!ccaa   || r.ccaa   === ccaa)   &&
-    (!sector || r.sector === sector) &&
-    (!tipo   || r.tipo   === tipo)   &&
-    r.fecha >= cutoff &&
+    (!ccaa   || r.ccaa === ccaa) &&
+    (!tipo   || r.tipo === tipo) &&
     (!search || r.empresa.toLowerCase().includes(search) ||
-                r.nif.toLowerCase().includes(search)     ||
-                r.ciudad.toLowerCase().includes(search)  ||
+                (r.juzgado || '').toLowerCase().includes(search) ||
                 r.ccaa.toLowerCase().includes(search))
-  ).sort((a,b) => {
+  ).sort((a, b) => {
     const va = a[sortKey], vb = b[sortKey];
     return sortDir * (va < vb ? -1 : va > vb ? 1 : 0);
   });
 }
 
-function sortBy(key) { sortDir = (sortKey===key) ? -sortDir : -1; sortKey=key; renderAll(); }
+function sortBy(key) { sortDir = sortKey === key ? -sortDir : -1; sortKey = key; renderAll(); }
 
 // ═══════════════════════════════════════════════════════
 //  CHARTS
 // ═══════════════════════════════════════════════════════
 const CHART_COLORS = {
-  red:   ["#dc2626","#ef4444","#f87171","#fca5a5","#fecaca"],
-  blue:  ["#2563eb","#3b82f6","#60a5fa","#93c5fd","#bfdbfe"],
-  multi: ["#dc2626","#2563eb","#16a34a","#d97706","#7c3aed","#0891b2","#db2777","#65a30d","#9333ea","#0d9488","#b45309","#6366f1","#e11d48","#0369a1"]
+  red:   ['#dc2626','#ef4444','#f87171','#fca5a5','#fecaca'],
 };
-
 let charts = {};
-function destroyChart(id) { if(charts[id]) { charts[id].destroy(); delete charts[id]; } }
+function destroyChart(id) { if (charts[id]) { charts[id].destroy(); delete charts[id]; } }
 
 function renderCCAAChart(data) {
   const counts = {};
-  CCAA_LIST.forEach(c => counts[c] = 0);
-  data.forEach(r => counts[r.ccaa] = (counts[r.ccaa]||0) + 1);
-  const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,12);
-  destroyChart("ccaa");
-  charts.ccaa = new Chart(document.getElementById("chartCCAA"), {
-    type: "bar",
+  data.forEach(r => counts[r.ccaa] = (counts[r.ccaa] || 0) + 1);
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  destroyChart('ccaa');
+  if (!sorted.length) return;
+  charts.ccaa = new Chart(document.getElementById('chartCCAA'), {
+    type: 'bar',
     data: {
-      labels: sorted.map(x=>x[0].replace("Comunidad de ","").replace("Comunitat ","").replace("C. Foral de ","").replace("Región de ","")),
-      datasets: [{ data: sorted.map(x=>x[1]), backgroundColor: sorted.map((_,i)=>CHART_COLORS.red[Math.min(i,4)]), borderRadius:4, borderSkipped:false }]
+      labels: sorted.map(x => x[0].replace('Comunidad de ','').replace('Comunitat ','').replace('C. Foral de ','').replace('Región de ','')),
+      datasets: [{ data: sorted.map(x => x[1]), backgroundColor: sorted.map((_, i) => CHART_COLORS.red[Math.min(i, 4)]), borderRadius: 4, borderSkipped: false }]
     },
     options: {
-      indexAxis:"y", responsive:true, plugins:{legend:{display:false}},
-      scales:{ x:{grid:{display:false}}, y:{grid:{display:false}} }
+      indexAxis: 'y', responsive: true, plugins: { legend: { display: false } },
+      scales: { x: { grid: { display: false } }, y: { grid: { display: false } } }
     }
   });
 }
 
 function renderTimeline(data) {
-  const months = {};
+  // Group by ISO week
+  const weeks = {};
   data.forEach(r => {
-    const key = `${r.fecha.getFullYear()}-${String(r.fecha.getMonth()+1).padStart(2,"0")}`;
-    months[key] = (months[key]||0)+1;
+    const d = new Date(r.fecha);
+    d.setDate(d.getDate() - d.getDay() + 1); // Monday of the week
+    const key = d.toISOString().slice(0, 10);
+    weeks[key] = (weeks[key] || 0) + 1;
   });
-  const sorted = Object.entries(months).sort((a,b)=>a[0]<b[0]?-1:1).slice(-12);
-  destroyChart("timeline");
-  charts.timeline = new Chart(document.getElementById("chartTimeline"), {
-    type:"line",
-    data:{
-      labels: sorted.map(x=>{const [y,m]=x[0].split("-"); return new Date(y,m-1).toLocaleDateString("es-ES",{month:"short",year:"2-digit"});}),
-      datasets:[{
-        data: sorted.map(x=>x[1]), fill:true,
-        borderColor:"#dc2626", backgroundColor:"rgba(220,38,38,.08)",
-        tension:.4, pointRadius:3, pointBackgroundColor:"#dc2626"
+  const sorted = Object.entries(weeks).sort((a, b) => a[0] < b[0] ? -1 : 1).slice(-12);
+  destroyChart('timeline');
+  if (!sorted.length) return;
+  charts.timeline = new Chart(document.getElementById('chartTimeline'), {
+    type: 'line',
+    data: {
+      labels: sorted.map(x => new Date(x[0]).toLocaleDateString('es-ES', { day: '2-digit', month: 'short' })),
+      datasets: [{
+        data: sorted.map(x => x[1]), fill: true,
+        borderColor: '#dc2626', backgroundColor: 'rgba(220,38,38,.08)',
+        tension: .4, pointRadius: 3, pointBackgroundColor: '#dc2626',
+        label: 'Concursos'
       }]
     },
-    options:{responsive:true, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false}},y:{grid:{color:"#f1f5f9"}}}}
+    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false } }, y: { grid: { color: '#f1f5f9' } } } }
   });
 }
 
 function renderTipoChart(data) {
-  const counts = {Voluntario:0,Necesario:0,"Liquidación":0};
-  data.forEach(r=>counts[r.tipo]=(counts[r.tipo]||0)+1);
-  const entries = Object.entries(counts).filter(x=>x[1]>0);
-  destroyChart("tipo");
-  charts.tipo = new Chart(document.getElementById("chartTipo"), {
-    type:"doughnut",
-    data:{
-      labels: entries.map(x=>x[0]),
-      datasets:[{ data:entries.map(x=>x[1]), backgroundColor:["#16a34a","#dc2626","#f59e0b"], borderWidth:2, borderColor:"#fff" }]
+  const counts = { Voluntario: 0, Necesario: 0, 'Liquidación': 0 };
+  data.forEach(r => counts[r.tipo] = (counts[r.tipo] || 0) + 1);
+  const entries = Object.entries(counts).filter(x => x[1] > 0);
+  destroyChart('tipo');
+  if (!entries.length) return;
+  charts.tipo = new Chart(document.getElementById('chartTipo'), {
+    type: 'doughnut',
+    data: {
+      labels: entries.map(x => x[0]),
+      datasets: [{ data: entries.map(x => x[1]), backgroundColor: ['#16a34a','#dc2626','#f59e0b'], borderWidth: 2, borderColor: '#fff' }]
     },
-    options:{responsive:true, cutout:"65%", plugins:{legend:{display:false}}}
+    options: { responsive: true, cutout: '65%', plugins: { legend: { display: false } } }
   });
-  const leg = document.getElementById("tipoLegend");
-  const colors = {Voluntario:"#16a34a",Necesario:"#dc2626","Liquidación":"#f59e0b"};
-  leg.innerHTML = entries.map(([k,v])=>
-    `<div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span class="dot" style="background:${colors[k]}"></span>${k}</span><strong>${v}</strong></div>`
-  ).join("");
-}
-
-function renderSectorChart(data) {
-  const counts = {};
-  data.forEach(r=>counts[r.sector]=(counts[r.sector]||0)+1);
-  const sorted = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,14);
-  destroyChart("sector");
-  charts.sector = new Chart(document.getElementById("chartSector"), {
-    type:"bar",
-    data:{
-      labels: sorted.map(x=>x[0]),
-      datasets:[{data:sorted.map(x=>x[1]), backgroundColor:CHART_COLORS.multi, borderRadius:4, borderSkipped:false}]
-    },
-    options:{
-      responsive:true, plugins:{legend:{display:false}},
-      scales:{x:{grid:{display:false},ticks:{font:{size:10}}}, y:{grid:{color:"#f1f5f9"}}}
-    }
-  });
+  const colors = { Voluntario: '#16a34a', Necesario: '#dc2626', 'Liquidación': '#f59e0b' };
+  document.getElementById('tipoLegend').innerHTML = entries.map(([k, v]) =>
+    `<div class="flex items-center justify-between"><span class="flex items-center gap-1.5"><span style="width:8px;height:8px;border-radius:50%;display:inline-block;background:${colors[k]}"></span>${k}</span><strong>${v}</strong></div>`
+  ).join('');
 }
 
 // ═══════════════════════════════════════════════════════
-//  MAPA — D3 coropleta con GeoJSON de es-atlas
+//  MAPA D3 COROPLETA
 // ═══════════════════════════════════════════════════════
+const CCAA_GEO_MAP = {
+  'Andalucía':'Andalucía','Aragón':'Aragón',
+  'Asturias':'Principado de Asturias','Principado de Asturias':'Principado de Asturias',
+  'Balears':'Islas Baleares','Illes Balears':'Islas Baleares','Islas Baleares':'Islas Baleares',
+  'Canarias':'Canarias','Cantabria':'Cantabria',
+  'Castilla y León':'Castilla y León','Castilla-La Mancha':'Castilla-La Mancha',
+  'Cataluña':'Cataluña','Catalunya':'Cataluña',
+  'Comunitat Valenciana':'Comunitat Valenciana',
+  'Extremadura':'Extremadura','Galicia':'Galicia','La Rioja':'La Rioja','Rioja, La':'La Rioja',
+  'Madrid':'Comunidad de Madrid','Comunidad de Madrid':'Comunidad de Madrid',
+  'Murcia':'Región de Murcia','Región de Murcia':'Región de Murcia','Murcia, Región de':'Región de Murcia',
+  'Navarra':'C. Foral de Navarra','Comunidad Foral de Navarra':'C. Foral de Navarra',
+  'País Vasco':'País Vasco','Euskadi':'País Vasco',
+};
+
+const CCAA_SVG_POS = {
+  'Comunidad de Madrid':[330,240],'Cataluña':[520,130],'Andalucía':[270,390],
+  'Comunitat Valenciana':[460,270],'País Vasco':[360,80],'Aragón':[430,160],
+  'Castilla y León':[260,180],'Galicia':[120,130],'Región de Murcia':[430,330],
+  'Castilla-La Mancha':[350,300],'Islas Baleares':[560,300],'Canarias':[90,435],
+  'Extremadura':[200,310],'Principado de Asturias':[230,90],'Cantabria':[290,75],
+  'La Rioja':[370,110],'C. Foral de Navarra':[410,95]
+};
+
 let spainTopoJSON = null;
 
 async function loadSpainMap() {
   try {
-    const res = await fetch("https://cdn.jsdelivr.net/npm/es-atlas@0.3.0/es/autonomous_regions.json");
+    const res = await fetch('https://cdn.jsdelivr.net/npm/es-atlas@0.3.0/es/autonomous_regions.json');
     spainTopoJSON = await res.json();
   } catch(e) {
-    console.warn("No se pudo cargar el GeoJSON de España:", e);
+    console.warn('No se pudo cargar el GeoJSON de España:', e);
   }
 }
 
 function renderMap(data) {
   const counts = {};
-  data.forEach(r => counts[r.ccaa] = (counts[r.ccaa]||0)+1);
+  data.forEach(r => counts[r.ccaa] = (counts[r.ccaa] || 0) + 1);
   const max = Math.max(...Object.values(counts), 1);
-
-  const svgEl = document.getElementById("mapSvg");
+  const svgEl = document.getElementById('mapSvg');
   while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
 
-  if (!spainTopoJSON) {
-    renderFallbackBubbleMap(svgEl, counts, max);
-    return;
-  }
+  if (!spainTopoJSON) { renderFallbackBubbleMap(svgEl, counts, max); return; }
 
   let geojson;
   try {
     const objName = Object.keys(spainTopoJSON.objects)[0];
     geojson = topojson.feature(spainTopoJSON, spainTopoJSON.objects[objName]);
-  } catch(e) {
-    console.warn("Error procesando TopoJSON:", e);
-    renderFallbackBubbleMap(svgEl, counts, max);
-    return;
-  }
+  } catch(e) { renderFallbackBubbleMap(svgEl, counts, max); return; }
 
   const W = 700, H = 540;
   const projection = d3.geoIdentity().reflectY(true).fitSize([W, H - 50], geojson);
   const pathGen = d3.geoPath().projection(projection);
+  const colorFn = n => n ? d3.interpolateReds(0.15 + (n / max) * 0.85) : '#f1f5f9';
+  const svg = d3.select('#mapSvg');
 
-  const colorFn = n => {
-    if (!n) return "#f1f5f9";
-    return d3.interpolateReds(0.15 + (n / max) * 0.85);
-  };
-
-  const svg = d3.select("#mapSvg");
-
-  // Regiones
-  svg.selectAll("path.ccaa-path")
-    .data(geojson.features)
-    .enter()
-    .append("path")
-    .attr("class", "ccaa-path")
-    .attr("d", pathGen)
-    .attr("fill", d => {
-      const name = CCAA_GEO_MAP[d.properties.name] || d.properties.name;
-      return colorFn(counts[name] || 0);
-    })
-    .attr("stroke", "#fff")
-    .attr("stroke-width", 0.8)
-    .on("mousemove", function(event, d) {
+  svg.selectAll('path.ccaa-path')
+    .data(geojson.features).enter().append('path')
+    .attr('class', 'ccaa-path').attr('d', pathGen)
+    .attr('fill', d => colorFn(counts[CCAA_GEO_MAP[d.properties.name] || d.properties.name] || 0))
+    .attr('stroke', '#fff').attr('stroke-width', 0.8)
+    .on('mousemove', function(event, d) {
       const name = CCAA_GEO_MAP[d.properties.name] || d.properties.name;
       const n = counts[name] || 0;
-      const tt = document.getElementById("tooltip");
-      tt.style.opacity = "1";
-      tt.style.left = (event.clientX + 12) + "px";
-      tt.style.top  = (event.clientY - 10) + "px";
-      tt.innerHTML  = `<strong>${name}</strong><br/>${n} concurso${n !== 1 ? "s" : ""}`;
+      const tt = document.getElementById('tooltip');
+      tt.style.opacity = '1';
+      tt.style.left = (event.clientX + 12) + 'px';
+      tt.style.top  = (event.clientY - 10) + 'px';
+      tt.innerHTML  = `<strong>${name}</strong><br/>${n} concurso${n !== 1 ? 's' : ''}`;
     })
-    .on("mouseleave", () => { document.getElementById("tooltip").style.opacity = "0"; });
+    .on('mouseleave', () => { document.getElementById('tooltip').style.opacity = '0'; });
 
-  // Etiquetas numéricas sobre cada región
-  svg.selectAll("text.ccaa-label")
-    .data(geojson.features)
-    .enter()
-    .append("text")
-    .attr("class", "ccaa-label")
-    .attr("transform", d => {
-      const c = pathGen.centroid(d);
-      return isNaN(c[0]) ? "translate(-99,-99)" : `translate(${c[0]},${c[1]})`;
-    })
-    .attr("text-anchor", "middle")
-    .attr("dy", "0.35em")
-    .attr("font-size", "9")
-    .attr("font-weight", "700")
-    .attr("pointer-events", "none")
-    .attr("fill", d => {
-      const name = CCAA_GEO_MAP[d.properties.name] || d.properties.name;
-      return (counts[name] || 0) / max > 0.4 ? "white" : "#6b7280";
-    })
-    .text(d => {
-      const name = CCAA_GEO_MAP[d.properties.name] || d.properties.name;
-      return counts[name] || "";
-    });
+  svg.selectAll('text.ccaa-label')
+    .data(geojson.features).enter().append('text')
+    .attr('class', 'ccaa-label')
+    .attr('transform', d => { const c = pathGen.centroid(d); return isNaN(c[0]) ? 'translate(-99,-99)' : `translate(${c[0]},${c[1]})`; })
+    .attr('text-anchor', 'middle').attr('dy', '0.35em')
+    .attr('font-size', '9').attr('font-weight', '700').attr('pointer-events', 'none')
+    .attr('fill', d => { const n = counts[CCAA_GEO_MAP[d.properties.name] || d.properties.name] || 0; return n / max > 0.4 ? 'white' : '#6b7280'; })
+    .text(d => counts[CCAA_GEO_MAP[d.properties.name] || d.properties.name] || '');
 
-  // Leyenda de color
-  const legendW = 180, legendH = 10;
-  const legendX = W - legendW - 16;
-  const legendY = H - 28;
-
-  const defs = svg.append("defs");
-  const grad = defs.append("linearGradient").attr("id", "mapLegendGrad");
+  const legendW = 180, lX = W - legendW - 16, lY = H - 28;
+  const defs = svg.append('defs');
+  const grad = defs.append('linearGradient').attr('id', 'mapLegendGrad');
   [0, 0.25, 0.5, 0.75, 1].forEach(t => {
-    grad.append("stop")
-      .attr("offset", `${t * 100}%`)
-      .attr("stop-color", t === 0 ? "#f1f5f9" : d3.interpolateReds(0.15 + t * 0.85));
+    grad.append('stop').attr('offset', `${t * 100}%`)
+      .attr('stop-color', t === 0 ? '#f1f5f9' : d3.interpolateReds(0.15 + t * 0.85));
   });
-
-  const leg = svg.append("g").attr("transform", `translate(${legendX},${legendY})`);
-  leg.append("rect").attr("width", legendW).attr("height", legendH)
-    .attr("fill", "url(#mapLegendGrad)").attr("rx", 3)
-    .attr("stroke", "#e2e8f0").attr("stroke-width", 0.5);
-  leg.append("text").attr("x", 0).attr("y", -4)
-    .attr("font-size", "8").attr("fill", "#94a3b8").text("Sin datos");
-  leg.append("text").attr("x", legendW).attr("y", -4)
-    .attr("text-anchor", "end").attr("font-size", "8").attr("fill", "#94a3b8").text("Más concursos");
+  const leg = svg.append('g').attr('transform', `translate(${lX},${lY})`);
+  leg.append('rect').attr('width', legendW).attr('height', 10).attr('fill', 'url(#mapLegendGrad)').attr('rx', 3).attr('stroke', '#e2e8f0').attr('stroke-width', 0.5);
+  leg.append('text').attr('x', 0).attr('y', -4).attr('font-size', '8').attr('fill', '#94a3b8').text('Sin datos');
+  leg.append('text').attr('x', legendW).attr('y', -4).attr('text-anchor', 'end').attr('font-size', '8').attr('fill', '#94a3b8').text('Más concursos');
 }
 
 function renderFallbackBubbleMap(svgEl, counts, max) {
-  const ns = "http://www.w3.org/2000/svg";
-  const outline = document.createElementNS(ns, "path");
-  outline.setAttribute("d", "M120,60 L200,40 L320,30 L440,45 L540,80 L600,140 L610,220 L580,300 L520,360 L460,400 L380,430 L300,445 L220,430 L150,390 L80,320 L55,240 L60,160 Z");
-  outline.setAttribute("fill", "#f1f5f9");
-  outline.setAttribute("stroke", "#cbd5e1");
-  outline.setAttribute("stroke-width", "2");
+  const ns = 'http://www.w3.org/2000/svg';
+  const outline = document.createElementNS(ns, 'path');
+  outline.setAttribute('d', 'M120,60 L200,40 L320,30 L440,45 L540,80 L600,140 L610,220 L580,300 L520,360 L460,400 L380,430 L300,445 L220,430 L150,390 L80,320 L55,240 L60,160 Z');
+  outline.setAttribute('fill', '#f1f5f9'); outline.setAttribute('stroke', '#cbd5e1'); outline.setAttribute('stroke-width', '2');
   svgEl.appendChild(outline);
-
-  const rect = document.createElementNS(ns, "rect");
-  rect.setAttribute("x","30"); rect.setAttribute("y","400");
-  rect.setAttribute("width","120"); rect.setAttribute("height","70");
-  rect.setAttribute("rx","8"); rect.setAttribute("fill","#f1f5f9");
-  rect.setAttribute("stroke","#cbd5e1"); rect.setAttribute("stroke-width","1.5");
-  svgEl.appendChild(rect);
-
-  const txt = document.createElementNS(ns, "text");
-  txt.setAttribute("x","90"); txt.setAttribute("y","445");
-  txt.setAttribute("text-anchor","middle"); txt.setAttribute("font-size","9");
-  txt.setAttribute("fill","#94a3b8"); txt.textContent = "Canarias";
-  svgEl.appendChild(txt);
-
-  Object.entries(CCAA_SVG_POS).forEach(([ccaa,[cx,cy]]) => {
-    const n = counts[ccaa] || 0;
-    if (!n) return;
-    const r = 8 + (n/max)*28;
-    const opacity = 0.4 + (n/max)*0.5;
-    const circle = document.createElementNS(ns, "circle");
-    circle.setAttribute("cx",cx); circle.setAttribute("cy",cy); circle.setAttribute("r",r);
-    circle.setAttribute("fill",`rgba(220,38,38,${opacity})`);
-    circle.setAttribute("stroke","rgba(220,38,38,0.8)"); circle.setAttribute("stroke-width","1.5");
-    circle.style.cursor = "pointer";
-    circle.addEventListener("mousemove", e => {
-      const t = document.getElementById("tooltip");
-      t.style.opacity="1"; t.style.left=(e.clientX+12)+"px"; t.style.top=(e.clientY-10)+"px";
-      t.innerHTML=`<strong>${ccaa}</strong><br/>${n} concurso${n!==1?"s":""}`;
-    });
-    circle.addEventListener("mouseleave",()=>document.getElementById("tooltip").style.opacity="0");
-    const label = document.createElementNS(ns,"text");
-    label.setAttribute("x",cx); label.setAttribute("y",cy+4);
-    label.setAttribute("text-anchor","middle"); label.setAttribute("font-size","9");
-    label.setAttribute("font-weight","700"); label.setAttribute("fill","white");
-    label.setAttribute("pointer-events","none"); label.textContent = n;
+  Object.entries(CCAA_SVG_POS).forEach(([ccaa, [cx, cy]]) => {
+    const n = counts[ccaa] || 0; if (!n) return;
+    const r = 8 + (n / max) * 28, opacity = 0.4 + (n / max) * 0.5;
+    const circle = document.createElementNS(ns, 'circle');
+    circle.setAttribute('cx', cx); circle.setAttribute('cy', cy); circle.setAttribute('r', r);
+    circle.setAttribute('fill', `rgba(220,38,38,${opacity})`); circle.setAttribute('stroke', 'rgba(220,38,38,0.8)'); circle.setAttribute('stroke-width', '1.5');
+    circle.style.cursor = 'pointer';
+    circle.addEventListener('mousemove', e => { const t = document.getElementById('tooltip'); t.style.opacity='1'; t.style.left=(e.clientX+12)+'px'; t.style.top=(e.clientY-10)+'px'; t.innerHTML=`<strong>${ccaa}</strong><br/>${n} concurso${n!==1?'s':''}`; });
+    circle.addEventListener('mouseleave', () => document.getElementById('tooltip').style.opacity='0');
+    const label = document.createElementNS(ns, 'text');
+    label.setAttribute('x', cx); label.setAttribute('y', cy + 4); label.setAttribute('text-anchor', 'middle'); label.setAttribute('font-size', '9'); label.setAttribute('font-weight', '700'); label.setAttribute('fill', 'white'); label.setAttribute('pointer-events', 'none'); label.textContent = n;
     svgEl.appendChild(circle); svgEl.appendChild(label);
   });
 }
@@ -634,25 +505,19 @@ function renderFallbackBubbleMap(svgEl, counts, max) {
 // ═══════════════════════════════════════════════════════
 function renderKPIs(data) {
   const now = new Date();
-  const thisMonth = data.filter(r=>r.fecha.getMonth()===now.getMonth()&&r.fecha.getFullYear()===now.getFullYear()).length;
-  const prevMonth = data.filter(r=>{
-    const d=new Date(now); d.setMonth(d.getMonth()-1);
-    return r.fecha.getMonth()===d.getMonth()&&r.fecha.getFullYear()===d.getFullYear();
-  }).length;
-  const vol = data.filter(r=>r.tipo==="Voluntario").length;
-  const nec = data.filter(r=>r.tipo==="Necesario").length;
-  const pasivo = data.reduce((s,r)=>s+r.pasivo,0);
-
-  document.getElementById("kpiTotal").textContent  = fmtNum(data.length);
-  document.getElementById("kpiMes").textContent    = thisMonth;
+  const thisMonth = data.filter(r => r.fecha.getMonth() === now.getMonth() && r.fecha.getFullYear() === now.getFullYear()).length;
+  const prevMonth = data.filter(r => { const d = new Date(now); d.setMonth(d.getMonth() - 1); return r.fecha.getMonth() === d.getMonth() && r.fecha.getFullYear() === d.getFullYear(); }).length;
+  const vol = data.filter(r => r.tipo === 'Voluntario').length;
+  const nec = data.filter(r => r.tipo === 'Necesario').length;
   const delta = thisMonth - prevMonth;
-  document.getElementById("kpiMesDelta").innerHTML =
-    `<span class="${delta>=0?"kpi-delta-pos":"kpi-delta-neg"}">${delta>=0?"+":""}${delta} vs mes ant.</span>`;
-  document.getElementById("kpiVol").textContent    = fmtNum(vol);
-  document.getElementById("kpiVolPct").textContent = data.length ? `${Math.round(vol/data.length*100)}% del total` : "";
-  document.getElementById("kpiNec").textContent    = fmtNum(nec);
-  document.getElementById("kpiNecPct").textContent = data.length ? `${Math.round(nec/data.length*100)}% del total` : "";
-  document.getElementById("kpiPasivo").textContent = (pasivo/1e6).toFixed(1);
+
+  document.getElementById('kpiTotal').textContent = data.length.toLocaleString('es-ES');
+  document.getElementById('kpiMes').textContent   = thisMonth;
+  document.getElementById('kpiMesDelta').innerHTML = `<span class="${delta >= 0 ? 'kpi-delta-pos' : 'kpi-delta-neg'}">${delta >= 0 ? '+' : ''}${delta} vs mes ant.</span>`;
+  document.getElementById('kpiVol').textContent   = vol.toLocaleString('es-ES');
+  document.getElementById('kpiVolPct').textContent = data.length ? `${Math.round(vol / data.length * 100)}% del total` : '';
+  document.getElementById('kpiNec').textContent   = nec.toLocaleString('es-ES');
+  document.getElementById('kpiNecPct').textContent = data.length ? `${Math.round(nec / data.length * 100)}% del total` : '';
 }
 
 // ═══════════════════════════════════════════════════════
@@ -660,30 +525,26 @@ function renderKPIs(data) {
 // ═══════════════════════════════════════════════════════
 function renderTable() {
   const data = getFilteredData();
-  const total = data.length;
-  const maxPage = Math.ceil(total/PAGE_SIZE)||1;
+  const maxPage = Math.ceil(data.length / PAGE_SIZE) || 1;
   currentPage = Math.min(currentPage, maxPage);
-  const slice = data.slice((currentPage-1)*PAGE_SIZE, currentPage*PAGE_SIZE);
-  const tbody = document.getElementById("tableBody");
-  const badgeClass = t => t==="Voluntario"?"badge-vol":t==="Necesario"?"badge-nec":"badge-liq";
+  const slice = data.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const badgeClass = t => t === 'Voluntario' ? 'badge-vol' : t === 'Necesario' ? 'badge-nec' : 'badge-liq';
+  const fmtDate = d => d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' });
 
-  tbody.innerHTML = slice.map(r=>`
+  document.getElementById('tableBody').innerHTML = slice.map(r => `
     <tr>
-      <td class="py-2.5 pr-4 font-medium text-gray-800">${r.empresa}</td>
-      <td class="py-2.5 pr-4 text-gray-400 font-mono text-xs">${r.nif}</td>
-      <td class="py-2.5 pr-4 text-gray-600">${r.ccaa.replace("Comunidad de ","").replace("Comunitat ","").replace("C. Foral de ","")}</td>
-      <td class="py-2.5 pr-4 text-gray-500 text-xs">${r.sector}</td>
+      <td class="py-2.5 pr-4 font-medium text-gray-800 max-w-xs truncate" title="${r.empresa}">${r.empresa}</td>
+      <td class="py-2.5 pr-4 text-gray-600 text-xs whitespace-nowrap">${r.ccaa.replace('Comunidad de ','').replace('Comunitat ','').replace('C. Foral de ','').replace('Región de ','')}</td>
+      <td class="py-2.5 pr-4 text-gray-400 text-xs max-w-xs truncate" title="${r.juzgado || ''}">${r.juzgado || '—'}</td>
       <td class="py-2.5 pr-4 text-gray-500 text-xs whitespace-nowrap">${fmtDate(r.fecha)}</td>
       <td class="py-2.5 pr-4"><span class="badge ${badgeClass(r.tipo)}">${r.tipo}</span></td>
-      <td class="py-2.5 pr-4 text-gray-600 text-xs whitespace-nowrap">${fmtNum(r.pasivo)} €</td>
-      <td class="py-2.5 pr-4 text-gray-500 text-xs">${r.admin}</td>
-      <td class="py-2.5 text-xs"><a href="https://www.boe.es/diario_boe/txt.php?id=${r.boe}" target="_blank" class="text-blue-500 hover:underline">${r.boe}</a></td>
-    </tr>`).join("");
+      <td class="py-2.5 text-xs"><a href="${r.url_boe}" target="_blank" rel="noopener" class="text-blue-500 hover:underline">${r.boe}</a></td>
+    </tr>`).join('');
 
-  document.getElementById("tableCount").textContent = `${fmtNum(total)} registros`;
-  document.getElementById("pageInfo").textContent   = `Página ${currentPage} de ${maxPage}`;
-  document.getElementById("btnPrev").disabled = currentPage<=1;
-  document.getElementById("btnNext").disabled = currentPage>=maxPage;
+  document.getElementById('tableCount').textContent = `${data.length.toLocaleString('es-ES')} registros`;
+  document.getElementById('pageInfo').textContent   = `Página ${currentPage} de ${maxPage}`;
+  document.getElementById('btnPrev').disabled = currentPage <= 1;
+  document.getElementById('btnNext').disabled = currentPage >= maxPage;
 }
 
 function changePage(dir) { currentPage += dir; renderTable(); }
@@ -698,15 +559,14 @@ function renderAll() {
   renderCCAAChart(data);
   renderTimeline(data);
   renderTipoChart(data);
-  renderSectorChart(data);
   currentPage = 1;
   renderTable();
 }
 
 function resetFilters() {
-  ["fCCAA","fSector","fTipo"].forEach(id=>document.getElementById(id).value="");
-  document.getElementById("fPeriodo").value="90";
-  document.getElementById("search").value="";
+  document.getElementById('fCCAA').value  = '';
+  document.getElementById('fTipo').value  = '';
+  document.getElementById('search').value = '';
   renderAll();
 }
 
@@ -715,33 +575,27 @@ function resetFilters() {
 // ═══════════════════════════════════════════════════════
 function exportCSV() {
   const data = getFilteredData();
-  const cols = ["empresa","nif","ccaa","ciudad","sector","tipo","pasivo","admin","boe"];
-  const header = ["Empresa","NIF","CCAA","Ciudad","Sector","Tipo","Pasivo €","Admin Concursal","BOE"];
-  const rows = data.map(r=>cols.map(c=>c==="fecha"?fmtDate(r[c]):String(r[c]||"").replace(/,/g,";")));
-  const csv = [header, ...rows].map(r=>r.join(",")).join("\n");
-  const a = document.createElement("a");
-  a.href = "data:text/csv;charset=utf-8,﻿"+encodeURIComponent(csv);
-  a.download = "concursos_acreedores.csv";
+  const fmtDate = d => d.toLocaleDateString('es-ES');
+  const header = ['Empresa','CCAA','Juzgado','Fecha','Tipo','BOE','URL'];
+  const rows = data.map(r => [r.empresa, r.ccaa, r.juzgado, fmtDate(r.fecha), r.tipo, r.boe, r.url_boe].map(v => `"${String(v||'').replace(/"/g,'""')}"`));
+  const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = 'data:text/csv;charset=utf-8,﻿' + encodeURIComponent(csv);
+  a.download = 'concursos_acreedores.csv';
   a.click();
 }
 
 // ═══════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════
-window.addEventListener("DOMContentLoaded", async () => {
-  const ccaaEl = document.getElementById("fCCAA");
-  CCAA_LIST.forEach(c=>{ const o=document.createElement("option"); o.value=c; o.textContent=c; ccaaEl.appendChild(o); });
-  const secEl = document.getElementById("fSector");
-  SECTORES.sort().forEach(s=>{ const o=document.createElement("option"); o.value=s; o.textContent=s; secEl.appendChild(o); });
-
-  ["fCCAA","fSector","fTipo","fPeriodo"].forEach(id=>
-    document.getElementById(id).addEventListener("change", renderAll));
-
-  document.getElementById("lastUpdate").textContent =
-    "Actualizado: " + new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"short",year:"numeric"});
+window.addEventListener('DOMContentLoaded', async () => {
+  // Filter listeners (periodo triggers full reload; others filter client-side)
+  document.getElementById('fPeriodo').addEventListener('change', loadData);
+  document.getElementById('fCCAA').addEventListener('change', renderAll);
+  document.getElementById('fTipo').addEventListener('change', renderAll);
 
   await loadSpainMap();
-  renderAll();
+  await loadData();
 });
 </script>
 </body>
