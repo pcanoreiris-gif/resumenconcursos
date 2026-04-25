@@ -6,6 +6,8 @@
   <title>Concursos de Acreedores — España</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/topojson-client@3/dist/topojson-client.min.js"></script>
   <style>
     body { background: #f8f9fb; font-family: 'Inter', system-ui, sans-serif; }
     .card { background: white; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
@@ -21,8 +23,9 @@
     .search-box { border:1px solid #e5e7eb; border-radius:8px; padding:6px 12px; outline:none; width:100%; }
     .search-box:focus { border-color:#3b82f6; box-shadow:0 0 0 2px rgba(59,130,246,.15); }
     canvas { max-height: 280px; }
-    .map-bubble { cursor:pointer; transition: r .2s; }
-    #mapSvg { width:100%; height:320px; }
+    #mapSvg { width:100%; height:360px; }
+    .ccaa-path { transition: opacity .15s; }
+    .ccaa-path:hover { opacity: .8; }
     .tooltip-box {
       position:fixed; background:#1e293b; color:white; padding:8px 12px;
       border-radius:8px; font-size:.8rem; pointer-events:none;
@@ -111,19 +114,11 @@
   <!-- ── MAP + CCAA BAR ─────────────────────────────────────────────── -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-    <!-- Spain bubble map -->
+    <!-- Spain choropleth map -->
     <div class="card p-5">
       <h2 class="text-sm font-semibold text-gray-700 mb-3">Distribución geográfica</h2>
-      <svg id="mapSvg" viewBox="0 0 700 520">
-        <!-- Spain outline (simplified) -->
-        <path d="M120,60 L200,40 L320,30 L440,45 L540,80 L600,140 L610,220 L580,300 L520,360 L460,400 L380,430 L300,445 L220,430 L150,390 L80,320 L55,240 L60,160 Z"
-              fill="#f1f5f9" stroke="#cbd5e1" stroke-width="2"/>
-        <!-- Canarias -->
-        <rect x="30" y="400" width="120" height="70" rx="8" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="1.5"/>
-        <text x="90" y="445" text-anchor="middle" font-size="9" fill="#94a3b8">Canarias</text>
-        <g id="mapBubbles"></g>
-      </svg>
-      <p class="text-xs text-gray-400 text-center mt-1">Tamaño del círculo = nº de concursos</p>
+      <svg id="mapSvg" viewBox="0 0 700 540"></svg>
+      <p class="text-xs text-gray-400 text-center mt-1">Color = intensidad de concursos por comunidad autónoma</p>
     </div>
 
     <!-- CCAA bar -->
@@ -235,7 +230,7 @@ const CIUDADES_POR_CCAA = {
   "C. Foral de Navarra":   ["Pamplona","Tudela"]
 };
 
-// Coordenadas aproximadas (SVG viewBox 0-700, 0-520)
+// Coordenadas de respaldo (fallback sin GeoJSON)
 const CCAA_SVG_POS = {
   "Comunidad de Madrid":    [330,240],
   "Cataluña":               [520,130],
@@ -254,6 +249,39 @@ const CCAA_SVG_POS = {
   "Cantabria":              [290,75],
   "La Rioja":               [370,110],
   "C. Foral de Navarra":    [410,95]
+};
+
+// Mapeo de nombres del GeoJSON (es-atlas) a nuestros nombres de CCAA
+const CCAA_GEO_MAP = {
+  "Andalucía":                  "Andalucía",
+  "Aragón":                     "Aragón",
+  "Asturias":                   "Principado de Asturias",
+  "Principado de Asturias":     "Principado de Asturias",
+  "Balears":                    "Islas Baleares",
+  "Illes Balears":              "Islas Baleares",
+  "Islas Baleares":             "Islas Baleares",
+  "Canarias":                   "Canarias",
+  "Cantabria":                  "Cantabria",
+  "Castilla y León":            "Castilla y León",
+  "Castilla-La Mancha":         "Castilla-La Mancha",
+  "Cataluña":                   "Cataluña",
+  "Catalunya":                  "Cataluña",
+  "Comunitat Valenciana":       "Comunitat Valenciana",
+  "Valenciana, Comunitat":      "Comunitat Valenciana",
+  "Extremadura":                "Extremadura",
+  "Galicia":                    "Galicia",
+  "La Rioja":                   "La Rioja",
+  "Rioja, La":                  "La Rioja",
+  "Madrid":                     "Comunidad de Madrid",
+  "Comunidad de Madrid":        "Comunidad de Madrid",
+  "Murcia":                     "Región de Murcia",
+  "Región de Murcia":           "Región de Murcia",
+  "Murcia, Región de":          "Región de Murcia",
+  "Navarra":                    "C. Foral de Navarra",
+  "Comunidad Foral de Navarra": "C. Foral de Navarra",
+  "Navarra, Comunidad Foral de":"C. Foral de Navarra",
+  "País Vasco":                 "País Vasco",
+  "Euskadi":                    "País Vasco",
 };
 
 const NOMBRES_EMPRESA = [
@@ -376,7 +404,6 @@ function renderCCAAChart(data) {
 }
 
 function renderTimeline(data) {
-  // Group by month
   const months = {};
   data.forEach(r => {
     const key = `${r.fecha.getFullYear()}-${String(r.fecha.getMonth()+1).padStart(2,"0")}`;
@@ -437,36 +464,168 @@ function renderSectorChart(data) {
 }
 
 // ═══════════════════════════════════════════════════════
-//  MAP
+//  MAPA — D3 coropleta con GeoJSON de es-atlas
 // ═══════════════════════════════════════════════════════
+let spainTopoJSON = null;
+
+async function loadSpainMap() {
+  try {
+    const res = await fetch("https://cdn.jsdelivr.net/npm/es-atlas@0.3.0/es/autonomous_regions.json");
+    spainTopoJSON = await res.json();
+  } catch(e) {
+    console.warn("No se pudo cargar el GeoJSON de España:", e);
+  }
+}
+
 function renderMap(data) {
   const counts = {};
-  data.forEach(r=>counts[r.ccaa]=(counts[r.ccaa]||0)+1);
-  const max = Math.max(...Object.values(counts),1);
-  const g = document.getElementById("mapBubbles");
-  g.innerHTML = "";
-  Object.entries(CCAA_SVG_POS).forEach(([ccaa,[cx,cy]])=>{
-    const n = counts[ccaa]||0;
-    if(n===0) return;
+  data.forEach(r => counts[r.ccaa] = (counts[r.ccaa]||0)+1);
+  const max = Math.max(...Object.values(counts), 1);
+
+  const svgEl = document.getElementById("mapSvg");
+  while (svgEl.firstChild) svgEl.removeChild(svgEl.firstChild);
+
+  if (!spainTopoJSON) {
+    renderFallbackBubbleMap(svgEl, counts, max);
+    return;
+  }
+
+  let geojson;
+  try {
+    const objName = Object.keys(spainTopoJSON.objects)[0];
+    geojson = topojson.feature(spainTopoJSON, spainTopoJSON.objects[objName]);
+  } catch(e) {
+    console.warn("Error procesando TopoJSON:", e);
+    renderFallbackBubbleMap(svgEl, counts, max);
+    return;
+  }
+
+  const W = 700, H = 540;
+  const projection = d3.geoIdentity().reflectY(true).fitSize([W, H - 50], geojson);
+  const pathGen = d3.geoPath().projection(projection);
+
+  const colorFn = n => {
+    if (!n) return "#f1f5f9";
+    return d3.interpolateReds(0.15 + (n / max) * 0.85);
+  };
+
+  const svg = d3.select("#mapSvg");
+
+  // Regiones
+  svg.selectAll("path.ccaa-path")
+    .data(geojson.features)
+    .enter()
+    .append("path")
+    .attr("class", "ccaa-path")
+    .attr("d", pathGen)
+    .attr("fill", d => {
+      const name = CCAA_GEO_MAP[d.properties.name] || d.properties.name;
+      return colorFn(counts[name] || 0);
+    })
+    .attr("stroke", "#fff")
+    .attr("stroke-width", 0.8)
+    .on("mousemove", function(event, d) {
+      const name = CCAA_GEO_MAP[d.properties.name] || d.properties.name;
+      const n = counts[name] || 0;
+      const tt = document.getElementById("tooltip");
+      tt.style.opacity = "1";
+      tt.style.left = (event.clientX + 12) + "px";
+      tt.style.top  = (event.clientY - 10) + "px";
+      tt.innerHTML  = `<strong>${name}</strong><br/>${n} concurso${n !== 1 ? "s" : ""}`;
+    })
+    .on("mouseleave", () => { document.getElementById("tooltip").style.opacity = "0"; });
+
+  // Etiquetas numéricas sobre cada región
+  svg.selectAll("text.ccaa-label")
+    .data(geojson.features)
+    .enter()
+    .append("text")
+    .attr("class", "ccaa-label")
+    .attr("transform", d => {
+      const c = pathGen.centroid(d);
+      return isNaN(c[0]) ? "translate(-99,-99)" : `translate(${c[0]},${c[1]})`;
+    })
+    .attr("text-anchor", "middle")
+    .attr("dy", "0.35em")
+    .attr("font-size", "9")
+    .attr("font-weight", "700")
+    .attr("pointer-events", "none")
+    .attr("fill", d => {
+      const name = CCAA_GEO_MAP[d.properties.name] || d.properties.name;
+      return (counts[name] || 0) / max > 0.4 ? "white" : "#6b7280";
+    })
+    .text(d => {
+      const name = CCAA_GEO_MAP[d.properties.name] || d.properties.name;
+      return counts[name] || "";
+    });
+
+  // Leyenda de color
+  const legendW = 180, legendH = 10;
+  const legendX = W - legendW - 16;
+  const legendY = H - 28;
+
+  const defs = svg.append("defs");
+  const grad = defs.append("linearGradient").attr("id", "mapLegendGrad");
+  [0, 0.25, 0.5, 0.75, 1].forEach(t => {
+    grad.append("stop")
+      .attr("offset", `${t * 100}%`)
+      .attr("stop-color", t === 0 ? "#f1f5f9" : d3.interpolateReds(0.15 + t * 0.85));
+  });
+
+  const leg = svg.append("g").attr("transform", `translate(${legendX},${legendY})`);
+  leg.append("rect").attr("width", legendW).attr("height", legendH)
+    .attr("fill", "url(#mapLegendGrad)").attr("rx", 3)
+    .attr("stroke", "#e2e8f0").attr("stroke-width", 0.5);
+  leg.append("text").attr("x", 0).attr("y", -4)
+    .attr("font-size", "8").attr("fill", "#94a3b8").text("Sin datos");
+  leg.append("text").attr("x", legendW).attr("y", -4)
+    .attr("text-anchor", "end").attr("font-size", "8").attr("fill", "#94a3b8").text("Más concursos");
+}
+
+function renderFallbackBubbleMap(svgEl, counts, max) {
+  const ns = "http://www.w3.org/2000/svg";
+  const outline = document.createElementNS(ns, "path");
+  outline.setAttribute("d", "M120,60 L200,40 L320,30 L440,45 L540,80 L600,140 L610,220 L580,300 L520,360 L460,400 L380,430 L300,445 L220,430 L150,390 L80,320 L55,240 L60,160 Z");
+  outline.setAttribute("fill", "#f1f5f9");
+  outline.setAttribute("stroke", "#cbd5e1");
+  outline.setAttribute("stroke-width", "2");
+  svgEl.appendChild(outline);
+
+  const rect = document.createElementNS(ns, "rect");
+  rect.setAttribute("x","30"); rect.setAttribute("y","400");
+  rect.setAttribute("width","120"); rect.setAttribute("height","70");
+  rect.setAttribute("rx","8"); rect.setAttribute("fill","#f1f5f9");
+  rect.setAttribute("stroke","#cbd5e1"); rect.setAttribute("stroke-width","1.5");
+  svgEl.appendChild(rect);
+
+  const txt = document.createElementNS(ns, "text");
+  txt.setAttribute("x","90"); txt.setAttribute("y","445");
+  txt.setAttribute("text-anchor","middle"); txt.setAttribute("font-size","9");
+  txt.setAttribute("fill","#94a3b8"); txt.textContent = "Canarias";
+  svgEl.appendChild(txt);
+
+  Object.entries(CCAA_SVG_POS).forEach(([ccaa,[cx,cy]]) => {
+    const n = counts[ccaa] || 0;
+    if (!n) return;
     const r = 8 + (n/max)*28;
     const opacity = 0.4 + (n/max)*0.5;
-    const circle = document.createElementNS("http://www.w3.org/2000/svg","circle");
+    const circle = document.createElementNS(ns, "circle");
     circle.setAttribute("cx",cx); circle.setAttribute("cy",cy); circle.setAttribute("r",r);
     circle.setAttribute("fill",`rgba(220,38,38,${opacity})`);
     circle.setAttribute("stroke","rgba(220,38,38,0.8)"); circle.setAttribute("stroke-width","1.5");
-    circle.style.cursor="pointer";
-    circle.addEventListener("mousemove",(e)=>{
-      const t=document.getElementById("tooltip");
+    circle.style.cursor = "pointer";
+    circle.addEventListener("mousemove", e => {
+      const t = document.getElementById("tooltip");
       t.style.opacity="1"; t.style.left=(e.clientX+12)+"px"; t.style.top=(e.clientY-10)+"px";
       t.innerHTML=`<strong>${ccaa}</strong><br/>${n} concurso${n!==1?"s":""}`;
     });
     circle.addEventListener("mouseleave",()=>document.getElementById("tooltip").style.opacity="0");
-    const label = document.createElementNS("http://www.w3.org/2000/svg","text");
+    const label = document.createElementNS(ns,"text");
     label.setAttribute("x",cx); label.setAttribute("y",cy+4);
     label.setAttribute("text-anchor","middle"); label.setAttribute("font-size","9");
-    label.setAttribute("font-weight","700"); label.setAttribute("fill","white"); label.setAttribute("pointer-events","none");
-    label.textContent = n;
-    g.appendChild(circle); g.appendChild(label);
+    label.setAttribute("font-weight","700"); label.setAttribute("fill","white");
+    label.setAttribute("pointer-events","none"); label.textContent = n;
+    svgEl.appendChild(circle); svgEl.appendChild(label);
   });
 }
 
@@ -561,7 +720,7 @@ function exportCSV() {
   const rows = data.map(r=>cols.map(c=>c==="fecha"?fmtDate(r[c]):String(r[c]||"").replace(/,/g,";")));
   const csv = [header, ...rows].map(r=>r.join(",")).join("\n");
   const a = document.createElement("a");
-  a.href = "data:text/csv;charset=utf-8,\uFEFF"+encodeURIComponent(csv);
+  a.href = "data:text/csv;charset=utf-8,﻿"+encodeURIComponent(csv);
   a.download = "concursos_acreedores.csv";
   a.click();
 }
@@ -569,21 +728,19 @@ function exportCSV() {
 // ═══════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════
-window.addEventListener("DOMContentLoaded", () => {
-  // Populate filter selects
+window.addEventListener("DOMContentLoaded", async () => {
   const ccaaEl = document.getElementById("fCCAA");
   CCAA_LIST.forEach(c=>{ const o=document.createElement("option"); o.value=c; o.textContent=c; ccaaEl.appendChild(o); });
   const secEl = document.getElementById("fSector");
   SECTORES.sort().forEach(s=>{ const o=document.createElement("option"); o.value=s; o.textContent=s; secEl.appendChild(o); });
 
-  // Filter listeners
   ["fCCAA","fSector","fTipo","fPeriodo"].forEach(id=>
     document.getElementById(id).addEventListener("change", renderAll));
 
-  // Last update
   document.getElementById("lastUpdate").textContent =
     "Actualizado: " + new Date().toLocaleDateString("es-ES",{day:"2-digit",month:"short",year:"numeric"});
 
+  await loadSpainMap();
   renderAll();
 });
 </script>
