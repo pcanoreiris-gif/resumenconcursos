@@ -1,0 +1,17 @@
+{
+  "name": "concursos-dashboard",
+  "version": "1.0.0",
+  "description": "Dashboard de Concursos de Acreedores en España - Fuente: BOE API",
+  "private": true,
+  "scripts": {
+    "dev": "vercel dev",
+    "build": "echo 'Static build — nothing to compile'"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2",
+    "xml2js": "^0.6.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
